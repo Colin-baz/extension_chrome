@@ -1,6 +1,10 @@
-const API_KEY = "AIzaSyCIqEUzEWO2PPlacLwdlLOjVUdDrFCdEno";
+importScripts('config.js');
 
-const MAX_DAILY_CALLS = 95;
+const API_KEY = CONFIG.API_KEY;
+const CHANNEL_ID = CONFIG.CHANNEL_ID;
+const MAX_DAILY_CALLS = CONFIG.MAX_DAILY_CALLS;
+const CHECK_INTERVAL = CONFIG.CHECK_INTERVAL;
+
 const CALL_COUNT_RESET_HOUR = 0;
 
 let dailyCallCount = 0;
@@ -16,7 +20,6 @@ async function checkApiLimits() {
             dailyCallCount: 0,
             lastResetDate: today
         });
-        console.log("Compteur d'appels API remis à zéro");
     } else {
         const storage = await chrome.storage.local.get(['dailyCallCount']);
         if (storage.dailyCallCount !== undefined) {
@@ -25,7 +28,6 @@ async function checkApiLimits() {
     }
 
     if (dailyCallCount >= MAX_DAILY_CALLS) {
-        console.log(`Limite d'appels API atteinte (${dailyCallCount}/${MAX_DAILY_CALLS}). Arrêt des vérifications jusqu'à demain.`);
         return false;
     }
 
@@ -35,20 +37,14 @@ async function checkApiLimits() {
 async function incrementApiCall() {
     dailyCallCount++;
     await chrome.storage.local.set({ dailyCallCount });
-    console.log(`Appel API #${dailyCallCount}/${MAX_DAILY_CALLS}`);
 }
 
-const CHANNEL_ID = "UCkjrRMRFAs5lBimpG-n_DPw";
-const CHECK_INTERVAL = 30 * 60 * 1000;
-
 chrome.runtime.onInstalled.addListener(async () => {
-    console.log("Extension installée - Initialisation du système de notifications");
     await initializeLastVideo();
     startVideoCheck();
 });
 
 chrome.runtime.onStartup.addListener(() => {
-    console.log("Chrome démarré - Relance de la surveillance");
     startVideoCheck();
 });
 
@@ -64,6 +60,10 @@ async function initializeLastVideo() {
 
         const data = await response.json();
 
+        if (data.error) {
+            return;
+        }
+
         if (data.items && data.items.length > 0) {
             const latestVideo = data.items[0];
             await chrome.storage.local.set({
@@ -71,29 +71,45 @@ async function initializeLastVideo() {
                 lastVideoTitle: latestVideo.snippet.title,
                 lastVideoDate: latestVideo.snippet.publishedAt
             });
-            console.log("Dernière vidéo initialisée:", latestVideo.snippet.title);
         }
     } catch (error) {
-        console.error("Erreur lors de l'initialisation:", error);
     }
 }
 
 function startVideoCheck() {
+    if (typeof window.videoCheckInterval !== 'undefined') {
+        clearInterval(window.videoCheckInterval);
+    }
+
     checkForNewVideos();
-    setInterval(checkForNewVideos, CHECK_INTERVAL);
+
+    window.videoCheckInterval = setInterval(checkForNewVideos, CHECK_INTERVAL);
 }
 
 async function checkForNewVideos() {
+    if (!(await checkApiLimits())) {
+        return;
+    }
+
     try {
-        console.log("Vérification des nouvelles vidéos...");
 
         const response = await fetch(
             `https://www.googleapis.com/youtube/v3/search?key=${API_KEY}&channelId=${CHANNEL_ID}&order=date&part=snippet&type=video&maxResults=1`
         );
+
+        await incrementApiCall();
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
         const data = await response.json();
 
+        if (data.error) {
+            return;
+        }
+
         if (!data.items || data.items.length === 0) {
-            console.log("Aucune vidéo trouvée");
             return;
         }
 
@@ -104,7 +120,7 @@ async function checkForNewVideos() {
         const lastKnownVideoId = storage.lastVideoId;
 
         if (lastKnownVideoId && currentVideoId !== lastKnownVideoId) {
-            sendNotification(latestVideo);
+            await sendNotification(latestVideo);
 
             await chrome.storage.local.set({
                 lastVideoId: currentVideoId,
@@ -114,27 +130,43 @@ async function checkForNewVideos() {
         }
 
     } catch (error) {
-        console.error("Erreur lors de la vérification des vidéos:", error);
     }
 }
 
-function sendNotification(video) {
-    const notificationOptions = {
-        type: 'basic',
-        iconUrl: 'icon.png',
-        title: '🎬 Nouvelle vidéo FishyAnimation !',
-        message: `"${video.snippet.title}"`,
-        contextMessage: 'Cliquez pour regarder',
-        requireInteraction: true
-    };
+async function sendNotification(video) {
+    try {
+        const notificationOptions = {
+            type: 'basic',
+            iconUrl: 'icon.png',
+            title: 'Nouvelle vidéo de FishyAnimation !',
+            message: `"${video.snippet.title}"`,
+            contextMessage: 'Cliquez pour regarder',
+            requireInteraction: false
+        };
 
-    chrome.notifications.create(notificationOptions, (notificationId) => {
+        const notificationId = await new Promise((resolve, reject) => {
+            chrome.notifications.create(notificationOptions, (notificationId) => {
+                if (chrome.runtime.lastError) {
+                    reject(chrome.runtime.lastError);
+                } else {
+                    resolve(notificationId);
+                }
+            });
+        });
+
         console.log("Notification envoyée:", notificationId);
 
-        chrome.storage.local.set({
+        await chrome.storage.local.set({
             [`notification_${notificationId}`]: video.id.videoId
         });
-    });
+
+        setTimeout(async () => {
+            await chrome.storage.local.remove([`notification_${notificationId}`]);
+        }, 60 * 60 * 1000);
+
+    } catch (error) {
+        console.error("Erreur lors de l'envoi de la notification:", error);
+    }
 }
 
 chrome.notifications.onClicked.addListener(async (notificationId) => {
@@ -153,24 +185,10 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
         chrome.notifications.clear(notificationId);
 
     } catch (error) {
-        console.error("Erreur lors du clic sur la notification:", error);
+        // Erreur silencieuse
     }
 });
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action === "testNotification") {
-        chrome.notifications.create({
-            type: 'basic',
-            iconUrl: 'icon.png',
-            title: '🧪 Test de notification',
-            message: 'Ceci est un test du système de notifications',
-            contextMessage: 'Extension FishyAnimation'
-        }, () => {
-            sendResponse({ success: true });
-        });
-        return true; // ⬅️ important pour MV3
-    } else if (message.action === "checkNow") {
-        checkForNewVideos().then(() => sendResponse({ success: true }));
-        return true; // ⬅️ idem
-    }
+chrome.notifications.onClosed.addListener(async (notificationId) => {
+    await chrome.storage.local.remove([`notification_${notificationId}`]);
 });
