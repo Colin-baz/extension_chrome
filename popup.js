@@ -1,5 +1,5 @@
-const apiKey = CONFIG.API_KEY;
-const channelId = CONFIG.CHANNEL_ID;
+const apiKey = "AIzaSyCIqEUzEWO2PPlacLwdlLOjVUdDrFCdEno";
+const channelId = "UCkjrRMRFAs5lBimpG-n_DPw";
 
 const channelPic = document.getElementById("channel-pic");
 const channelName = document.getElementById("channel-name");
@@ -20,6 +20,7 @@ fetch(`https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics,br
         channelLink.href = `https://www.youtube.com/channel/${channelId}`;
     })
     .catch(error => {
+        console.error("Erreur lors du chargement des infos de la chaîne :", error);
         channelName.textContent = "Erreur de chargement.";
     });
 
@@ -44,5 +45,6 @@ fetch(`https://www.googleapis.com/youtube/v3/search?key=${apiKey}&channelId=${ch
         });
     })
     .catch(error => {
+        console.error("Erreur lors du chargement des vidéos :", error);
         videosList.textContent = "Impossible de charger les vidéos.";
     });

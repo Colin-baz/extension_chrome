@@ -1,14 +1,11 @@
-importScripts('config.js');
+const API_KEY = "AIzaSyCIqEUzEWO2PPlacLwdlLOjVUdDrFCdEno";
 
-const API_KEY = CONFIG.API_KEY;
-const CHANNEL_ID = CONFIG.CHANNEL_ID;
-const MAX_DAILY_CALLS = CONFIG.MAX_DAILY_CALLS;
-const CHECK_INTERVAL = CONFIG.CHECK_INTERVAL;
-
+const MAX_DAILY_CALLS = 95;
 const CALL_COUNT_RESET_HOUR = 0;
 
 let dailyCallCount = 0;
 let lastResetDate = new Date().toDateString();
+let videoCheckInterval;
 
 async function checkApiLimits() {
     const today = new Date().toDateString();
@@ -39,6 +36,9 @@ async function incrementApiCall() {
     await chrome.storage.local.set({ dailyCallCount });
 }
 
+const CHANNEL_ID = "UCkjrRMRFAs5lBimpG-n_DPw";
+const CHECK_INTERVAL = 30 * 60 * 1000;
+
 chrome.runtime.onInstalled.addListener(async () => {
     await initializeLastVideo();
     startVideoCheck();
@@ -57,6 +57,10 @@ async function initializeLastVideo() {
         );
 
         await incrementApiCall();
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
 
         const data = await response.json();
 
@@ -77,13 +81,13 @@ async function initializeLastVideo() {
 }
 
 function startVideoCheck() {
-    if (typeof window.videoCheckInterval !== 'undefined') {
-        clearInterval(window.videoCheckInterval);
+    if (videoCheckInterval) {
+        clearInterval(videoCheckInterval);
     }
 
     checkForNewVideos();
 
-    window.videoCheckInterval = setInterval(checkForNewVideos, CHECK_INTERVAL);
+    videoCheckInterval = setInterval(checkForNewVideos, CHECK_INTERVAL);
 }
 
 async function checkForNewVideos() {
@@ -92,7 +96,6 @@ async function checkForNewVideos() {
     }
 
     try {
-
         const response = await fetch(
             `https://www.googleapis.com/youtube/v3/search?key=${API_KEY}&channelId=${CHANNEL_ID}&order=date&part=snippet&type=video&maxResults=1`
         );
@@ -154,8 +157,6 @@ async function sendNotification(video) {
             });
         });
 
-        console.log("Notification envoyée:", notificationId);
-
         await chrome.storage.local.set({
             [`notification_${notificationId}`]: video.id.videoId
         });
@@ -165,7 +166,6 @@ async function sendNotification(video) {
         }, 60 * 60 * 1000);
 
     } catch (error) {
-        console.error("Erreur lors de l'envoi de la notification:", error);
     }
 }
 
@@ -185,7 +185,6 @@ chrome.notifications.onClicked.addListener(async (notificationId) => {
         chrome.notifications.clear(notificationId);
 
     } catch (error) {
-        // Erreur silencieuse
     }
 });
 
